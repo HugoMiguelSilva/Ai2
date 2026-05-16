@@ -10,6 +10,173 @@ import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
+from sklearn.tree import plot_tree
+import os
+
+# ============================================================
+# MODEL EXPLANATION HELPER FUNCTIONS
+# ============================================================
+
+def get_model_explanation(model, input_data, X_test_sample=None, feature_names=None):
+    """
+    Generate explanation for model prediction based on model type
+    """
+    explanation = {
+        'type': type(model).__name__,
+        'has_importance': hasattr(model, 'feature_importances_'),
+        'has_coef': hasattr(model, 'coef_'),
+        'feature_names': feature_names
+    }
+    
+    # For tree-based models - get feature importances
+    if hasattr(model, 'feature_importances_'):
+        explanation['importances'] = model.feature_importances_
+    
+    # For linear models - get coefficients
+    if hasattr(model, 'coef_'):
+        explanation['coefficients'] = model.coef_.flatten()
+    
+    return explanation
+
+def plot_feature_importance(model, feature_names, top_n=10):
+    """Plot top N most important features"""
+    if not hasattr(model, 'feature_importances_'):
+        return None
+    
+    importances = model.feature_importances_
+    indices = np.argsort(importances)[::-1][:top_n]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.barh(range(len(indices)), importances[indices], color='steelblue')
+    ax.set_yticks(range(len(indices)))
+    ax.set_yticklabels([feature_names[i] for i in indices])
+    ax.set_xlabel('Importance Score')
+    ax.set_title('Top 10 Features Contributing to Prediction')
+    ax.invert_yaxis()
+    plt.tight_layout()
+    return fig
+
+def get_forest_explanation(forest_model, input_data, feature_names):
+    """
+    Get explanation for Random Forest predictions by analyzing tree votes
+    """
+    # Get predictions from each tree
+    predictions = np.array([tree.predict(input_data)[0] for tree in forest_model.estimators_])
+    
+    low_risk_votes = np.sum(predictions == 0)
+    high_risk_votes = np.sum(predictions == 1)
+    total_trees = len(forest_model.estimators_)
+    
+    return {
+        'low_risk_votes': low_risk_votes,
+        'high_risk_votes': high_risk_votes,
+        'total_trees': total_trees,
+        'low_risk_pct': low_risk_votes / total_trees * 100,
+        'high_risk_pct': high_risk_votes / total_trees * 100
+    }
+
+def plot_forest_votes(forest_info):
+    """Plot forest voting distribution"""
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    votes = [forest_info['low_risk_votes'], forest_info['high_risk_votes']]
+    labels = [f"Low Risk\n({forest_info['low_risk_votes']} votes)", 
+              f"High Risk\n({forest_info['high_risk_votes']} votes)"]
+    colors = ['#117a37', '#b00020']
+    
+    bars = ax.bar(labels, votes, color=colors, alpha=0.7, edgecolor='black', linewidth=2)
+    ax.set_ylabel('Number of Trees', fontsize=12, fontweight='bold')
+    ax.set_title(f'Random Forest Voting: {forest_info["total_trees"]} Trees Total', fontsize=12, fontweight='bold')
+    ax.set_ylim(0, forest_info['total_trees'])
+    
+    # Add percentage labels
+    for i, (bar, pct) in enumerate(zip(bars, [forest_info['low_risk_pct'], forest_info['high_risk_pct']])):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{pct:.1f}%',
+                ha='center', va='bottom', fontsize=11, fontweight='bold')
+    
+    plt.tight_layout()
+    return fig
+
+def get_tree_path_explanation(tree_model, input_data, feature_names):
+    """
+    Get the path the input took through the decision tree and explain it step by step
+    """
+    # Get the leaf node
+    leaf_id = tree_model.apply(input_data.values)
+    
+    # Get decision path
+    node_indicator = tree_model.decision_path(input_data)
+    
+    # Get the nodes visited
+    node_index = node_indicator.indices[node_indicator.indptr[0]:node_indicator.indptr[1]]
+    
+    feature = tree_model.tree_.feature
+    threshold = tree_model.tree_.threshold
+    
+    path_explanation = []
+    
+    for node_id in node_index:
+        if node_id == leaf_id[0]:
+            # Reached leaf
+            break
+        
+        # Check if this is a decision node
+        if feature[node_id] >= 0:
+            threshold_val = threshold[node_id]
+            feature_name = feature_names[feature[node_id]]
+            input_val = input_data.iloc[0, feature[node_id]]
+            
+            if input_val <= threshold_val:
+                direction = "≤"
+                path_explanation.append(f"✓ {feature_name} = {input_val:.2f} {direction} {threshold_val:.2f} (Go LEFT)")
+            else:
+                direction = ">"
+                path_explanation.append(f"✓ {feature_name} = {input_val:.2f} {direction} {threshold_val:.2f} (Go RIGHT)")
+    
+    return path_explanation
+
+def plot_decision_tree_full(tree_model, feature_names, input_data):
+    """Plot full decision tree with highlighted decision path"""
+    fig, ax = plt.subplots(figsize=(25, 15))
+    plot_tree(tree_model, 
+              feature_names=feature_names,
+              class_names=['Low Risk', 'High Risk'],
+              filled=True,
+              ax=ax,
+              fontsize=9,
+              proportion=True)
+    plt.title('Complete Decision Tree - How Model Makes Predictions', fontsize=16, fontweight='bold', pad=20)
+    plt.tight_layout()
+    return fig
+
+def explain_prediction_contribution(model, input_data, prediction, feature_names):
+    """
+    For Linear models, show how each feature contributed to the prediction
+    """
+    if not hasattr(model, 'coef_'):
+        return None
+    
+    # Get the coefficients
+    coef = model.coef_.flatten()
+    
+    # Calculate contribution of each feature
+    contributions = input_data.values.flatten() * coef
+    
+    # Create dataframe
+    contrib_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Value': input_data.values.flatten(),
+        'Coefficient': coef,
+        'Contribution': contributions
+    }).sort_values('Contribution', key=abs, ascending=False)
+    
+    # Normalize for visualization
+    max_contrib = contrib_df['Contribution'].abs().max()
+    contrib_df['Contribution_Norm'] = contrib_df['Contribution'] / max_contrib if max_contrib > 0 else 0
+    
+    return contrib_df
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -50,19 +217,50 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# LOAD MODEL
+# MODEL DISCOVERY & LOADING
 @st.cache_resource
-def load_model():
-    model = pickle.load(open('credit_risk_model.pkl', 'rb'))
-    encoders = pickle.load(open('label_encoders.pkl', 'rb'))
-    return model, encoders
+def load_models_info():
+    model_dir = 'models'
+    info_path = os.path.join(model_dir, 'models_info.pkl')
+    if os.path.exists(info_path):
+        try:
+            return pickle.load(open(info_path, 'rb'))
+        except Exception:
+            return None
+    return None
 
-model, encoders = load_model()
+models_info = load_models_info()
+
+if models_info:
+    model_names = list(models_info.keys())
+    default_name = max(model_names, key=lambda x: models_info[x].get('weighted_score') or 0)
+    selected_model_name = st.sidebar.selectbox("Select prediction model", options=model_names, index=model_names.index(default_name))
+    selected_path = models_info[selected_model_name]['file']
+
+    @st.cache_resource
+    def load_model_from_path(path):
+        return pickle.load(open(path, 'rb'))
+
+    model = load_model_from_path(selected_path)
+    encoders = pickle.load(open(os.path.join('models', 'label_encoders.pkl'), 'rb'))
+else:
+    # Fallback to older single-model layout but still show a sidebar selector
+    st.sidebar.info('No models/ folder detected — using default single model.')
+    single_name = 'Default (credit_risk_model.pkl)'
+    selected_model_name = st.sidebar.selectbox('Select prediction model', options=[single_name])
+
+    @st.cache_resource
+    def load_default_model():
+        model = pickle.load(open('credit_risk_model.pkl', 'rb'))
+        encoders = pickle.load(open('label_encoders.pkl', 'rb'))
+        return model, encoders
+
+    model, encoders = load_default_model()
 
 # MAIN APP
 st.markdown("<div class='main-header'>Financial Risk Assistant</div>", unsafe_allow_html=True)
 st.markdown("---")
-tab1, tab2, tab3 = st.tabs(["Prediction", "Dataset Analysis", "About"])
+tab1, tab2 = st.tabs(["Prediction", "Dataset Analysis"])
 
 # TAB 1: PREDICTION
 with tab1:
@@ -176,6 +374,135 @@ with tab1:
                 - Verify income and employment details.
                 """)
             
+            # MODEL EXPLANATION - How the model reached this conclusion
+            st.markdown("---")
+            st.subheader("How the Model Reached This Conclusion")
+            
+            feature_names = input_data.columns.tolist()
+            model_type = type(model).__name__
+            
+            # Show explanation based on model type
+            if 'Tree' in model_type or 'Forest' in model_type:
+                # For tree-based models, show feature importance
+                st.write(f"**Model Type:** {model_type}")
+                
+                col_exp1, col_exp2 = st.columns([1, 1])
+                
+                with col_exp1:
+                    importance_fig = plot_feature_importance(model, feature_names, top_n=10)
+                    if importance_fig:
+                        st.pyplot(importance_fig)
+                
+                with col_exp2:
+                    st.info("""
+                    **How to read this:**
+                    - Longer bars = more important features
+                    - Features at the top had the most influence on this prediction
+                    - The model looked at these features to decide between LOW and HIGH risk
+                    """)
+                
+                # For Decision Trees, show the full tree and the path taken
+                if 'Tree' in model_type and not 'Forest' in model_type:
+                    st.write("---")
+                    st.subheader("Decision Tree Path Taken")
+                    st.write("Here's exactly how the tree navigated to reach this conclusion:")
+                    
+                    # Get the path explanation
+                    path_steps = get_tree_path_explanation(model, input_data, feature_names)
+                    
+                    col_path1, col_path2 = st.columns([1, 2])
+                    
+                    with col_path1:
+                        st.write("**Decision Steps:**")
+                        for i, step in enumerate(path_steps, 1):
+                            st.write(f"**Step {i}:** {step}")
+                        
+                        if prediction == 0:
+                            st.success("**CONCLUSION:** Low Risk")
+                        else:
+                            st.error("**CONCLUSION:** High Risk")
+                    
+                    with col_path2:
+                        st.write("**What these checks mean:**")
+                        st.info("""
+                        - Each step is a question the tree asks
+                        - Based on your input values, it decides which direction to go
+                        - It keeps asking questions until reaching a final decision
+                        - Green nodes = Low Risk, Red nodes = High Risk
+                        """)
+                    
+                    # Show the full tree
+                    st.write("---")
+                    with st.expander("View Complete Decision Tree Visualization"):
+                        tree_fig = plot_decision_tree_full(model, feature_names, input_data)
+                        st.pyplot(tree_fig)
+                        st.caption("Full tree structure: Each box shows a decision rule and the result at leaf nodes")
+                
+                # For Random Forest, show voting results
+                elif 'Forest' in model_type:
+                    st.write("---")
+                    st.subheader("Random Forest Consensus")
+                    st.write("Here's how all the trees in the ensemble voted:")
+                    
+                    forest_info = get_forest_explanation(model, input_data, feature_names)
+                    
+                    col_forest1, col_forest2 = st.columns([1, 1])
+                    
+                    with col_forest1:
+                        votes_fig = plot_forest_votes(forest_info)
+                        st.pyplot(votes_fig)
+                    
+                    with col_forest2:
+                        st.info(f"""
+                        **Forest Decision Summary:**
+                        - **Total Trees:** {forest_info['total_trees']}
+                        - **Low Risk Votes:** {forest_info['low_risk_votes']} ({forest_info['low_risk_pct']:.1f}%)
+                        - **High Risk Votes:** {forest_info['high_risk_votes']} ({forest_info['high_risk_pct']:.1f}%)
+                        - **Winner:** {'Low Risk' if prediction == 0 else 'High Risk'}
+                        
+                        The majority vote determines the final prediction.
+                        """)
+            
+            elif 'Logistic' in model_type:
+                # For logistic regression, show feature contributions with decision boundary
+                st.write(f"**Model Type:** {model_type}")
+                st.write("This model weighs each feature and combines them to calculate risk probability.")
+                
+                contrib_df = explain_prediction_contribution(model, input_data, prediction, feature_names)
+                if contrib_df is not None:
+                    st.write("---")
+                    st.subheader("How Features Contributed to the Decision")
+                    
+                    col_reg1, col_reg2 = st.columns([1, 1])
+                    
+                    with col_reg1:
+                        st.write("**Top features influencing this prediction:**")
+                        
+                        fig, ax = plt.subplots(figsize=(10, 5))
+                        colors = ['#b00020' if x > 0 else '#117a37' for x in contrib_df['Contribution'][:10]]
+                        ax.barh(range(len(contrib_df[:10])), contrib_df['Contribution'][:10], color=colors)
+                        ax.set_yticks(range(len(contrib_df[:10])))
+                        ax.set_yticklabels(contrib_df['Feature'][:10])
+                        ax.set_xlabel('Contribution to Risk Score')
+                        ax.set_title('Feature Contributions to Prediction')
+                        ax.axvline(0, color='black', linestyle='-', linewidth=0.8)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                    
+                    with col_reg2:
+                        st.info("""
+                        **How to read this:**
+                        - Red bars = Push toward HIGH risk
+                        - Green bars = Push toward LOW risk
+                        - Longer bars = Stronger effect
+                        
+                        The model adds all contributions to get the final risk score.
+                        """)
+                    
+                    st.write("---")
+                    st.write("**Detailed Feature Analysis:**")
+                    st.dataframe(contrib_df[['Feature', 'Value', 'Coefficient', 'Contribution']].head(10), use_container_width=True)
+            
         except Exception as e:
             st.error(f"Error making prediction: {str(e)}")
 
@@ -258,61 +585,3 @@ with tab2:
         ax.legend(fontsize=9)
         plt.tight_layout()
         st.pyplot(fig)
-
-# TAB 3: ABOUT
-with tab3:
-    st.header("About This Project")
-    
-    st.subheader("Project Overview")
-    st.write("""
-    The **Financial Risk Assistant** is a machine learning-powered system designed to assess credit risk 
-    and support lending decisions. This project demonstrates the practical application of machine learning 
-    in the financial services industry.
-    """)
-    
-    st.subheader("Model Details")
-    st.write("""
-    - **Algorithm**: Random Forest Classifier
-    - **Training Set**: 80% of data
-    - **Test Set**: 20% of data
-    - **Features**: 11 customer and loan characteristics
-    - **Target**: Binary classification (Low Risk / High Risk)
-    """)
-    
-    st.subheader("Key Features Considered")
-    st.write("""
-    1. **Age**: Customer's age
-    2. **Income**: Annual income
-    3. **Employment Length**: Years of employment
-    4. **Loan Amount**: Requested loan amount
-    5. **Interest Rate**: Proposed interest rate
-    6. **Loan Grade**: Credit rating of the loan
-    7. **Loan Intent**: Purpose of the loan
-    8. **Home Ownership**: Housing status
-    9. **Credit History**: Length of credit history
-    10. **Previous Defaults**: Past default history
-    """)
-    
-    st.subheader("Business Use Cases")
-    st.write("""
-    - **Loan Approval**: Quick assessment for approval/rejection
-    - **Risk Pricing**: Determine appropriate interest rates
-    - **Portfolio Management**: Identify high-risk customers
-    - **Fraud Detection**: Flag unusual patterns
-    """)
-    
-    st.subheader("Model Performance")
-    st.info("""
-    The model achieves strong performance metrics on the test set:
-    - **Accuracy**: ~93-95%
-    - **Precision**: ~90-92%
-    - **Recall**: ~85-87%
-    - **F1-Score**: ~87-89%
-    """)
-    
-    st.subheader("Disclaimer")
-    st.warning("""
-    This system is a proof-of-concept for demonstration purposes. Real-world lending decisions 
-    should incorporate additional factors, regulatory requirements, and human judgment. 
-    Always validate model predictions with domain experts.
-    """)

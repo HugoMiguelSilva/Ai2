@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
+import os
+import json
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
@@ -204,17 +206,43 @@ if hasattr(best_model, 'feature_importances_'):
     for idx, row in feature_importance.head(10).iterrows():
         print(f"   {row['feature']:25s} {row['importance']:.4f}")
 
-# SAVE BEST MODEL ONLY
+# SAVE ALL TUNED MODELS
 
-print(f"\n9. SAVING BEST MODEL")
+print(f"\n9. SAVING ALL TUNED MODELS")
 
-pickle.dump(best_model, open('credit_risk_model.pkl', 'wb'))
-pickle.dump(le_dict, open('label_encoders.pkl', 'wb'))
-pickle.dump(comparison_df, open('model_comparison.pkl', 'wb'))
+MODEL_DIR = 'models'
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-print(f"   > Best model ({best_model_name}) saved to 'credit_risk_model.pkl'")
-print(f"   > Label encoders saved to 'label_encoders.pkl'")
-print(f"   > Comparison results saved to 'model_comparison.pkl'")
+# Save each tuned model so the app can let users pick one
+models_info = {}
+for model_name, vals in results.items():
+    slug = model_name.lower().replace(' ', '_')
+    filename = f"{slug}.pkl"
+    filepath = os.path.join(MODEL_DIR, filename)
+    pickle.dump(vals['model'], open(filepath, 'wb'))
+    models_info[model_name] = {
+        'file': filepath,
+        'accuracy': vals['accuracy'],
+        'precision': vals['precision'],
+        'recall': vals['recall'],
+        'f1': vals['f1'],
+        'roc_auc': vals['roc_auc'],
+        'weighted_score': vals.get('weighted_score', None)
+    }
+
+# Also save the label encoders and comparison dataframe
+pickle.dump(le_dict, open(os.path.join(MODEL_DIR, 'label_encoders.pkl'), 'wb'))
+pickle.dump(comparison_df, open(os.path.join(MODEL_DIR, 'model_comparison.pkl'), 'wb'))
+
+# Save models metadata for easy discovery in the app
+pickle.dump(models_info, open(os.path.join(MODEL_DIR, 'models_info.pkl'), 'wb'))
+with open(os.path.join(MODEL_DIR, 'models_info.json'), 'w', encoding='utf-8') as f:
+    json.dump(models_info, f, ensure_ascii=False, indent=2)
+
+print(f"   > All tuned models saved to '{MODEL_DIR}/' (one file per model)")
+print(f"   > Label encoders saved to '{MODEL_DIR}/label_encoders.pkl'")
+print(f"   > Comparison results saved to '{MODEL_DIR}/model_comparison.pkl'")
+print(f"   > Models metadata saved to '{MODEL_DIR}/models_info.pkl' and .json")
 
 # ========================================================================
 # SAVE COMPARISON VISUALIZATION
