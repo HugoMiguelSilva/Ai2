@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -50,7 +50,7 @@ for col in categorical_cols:
     le = LabelEncoder()
     X[col] = le.fit_transform(X[col])
     le_dict[col] = le
-    print(f"   ✓ {col} encoded")
+    print(f"   > {col} encoded")
 
 # TRAIN-TEST SPLIT
 print(f"\n3. TRAIN-TEST SPLIT")
@@ -61,30 +61,64 @@ print(f"   Training set: {len(X_train)} samples")
 print(f"   Test set: {len(X_test)} samples")
 
 
-# TRAIN MULTIPLE MODELS
+# TRAIN MULTIPLE MODELS WITH HYPERPARAMETER TUNING
 
-print(f"\n4. TRAINING MULTIPLE MODELS")
+print(f"\n4. OTIMIZAÇÃO E TREINO DOS MODELOS (GRID SEARCH)")
 
-models = {
-    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
-    'Decision Tree': DecisionTreeClassifier(max_depth=15, random_state=42),
-    'Random Forest': RandomForestClassifier(
-        n_estimators=100, max_depth=15, min_samples_split=5, random_state=42, n_jobs=-1
-    )
+models_params = {
+    'Logistic Regression': {
+        'estimator': LogisticRegression(max_iter=1000, random_state=42),
+        'param_grid': {
+            'C': [0.1, 1.0, 10.0],
+            'penalty': ['l2']
+        }
+    },
+    'Decision Tree': {
+        'estimator': DecisionTreeClassifier(random_state=42),
+        'param_grid': {
+            'max_depth': [5, 10, 15, 20],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4]
+        }
+    },
+    'Random Forest': {
+        'estimator': RandomForestClassifier(random_state=42, n_jobs=-1),
+        'param_grid': {
+            'n_estimators': [50, 100, 150],
+            'max_depth': [10, 15, None],
+            'min_samples_split': [2, 5],
+            'min_samples_leaf': [1, 2]
+        }
+    }
 }
 
 results = {}
-predictions = {}
 
-for model_name, model in models.items():
-    print(f"   Training {model_name}...", end=" ")
-    model.fit(X_train, y_train)
+for model_name, config in models_params.items():
+    print(f"\n   -> A otimizar {model_name}...")
     
-    # Make predictions
-    y_pred = model.predict(X_test) 
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    grid_search = GridSearchCV(
+        estimator=config['estimator'],
+        param_grid=config['param_grid'],
+        cv=3, # 3 folds de cross-validation
+        scoring='f1', # Otimizando diretamente para F1-Score
+        n_jobs=-1, # Usa todos os cores do CPU
+        verbose=1 # Mostra resumo do progresso no terminal
+    )
     
-    # Calculate metrics
+    # Treinar todas as combinações
+    grid_search.fit(X_train, y_train)
+    
+    # Obter o melhor modelo treinado
+    best_model = grid_search.best_estimator_
+    print(f"      > Melhores parâmetros: {grid_search.best_params_}")
+    print(f"      > Melhor F1-Score (cross-val): {grid_search.best_score_:.4f}")
+    
+    # Fazer previsões no teste set usando o MELHOR modelo
+    y_pred = best_model.predict(X_test) 
+    y_pred_proba = best_model.predict_proba(X_test)[:, 1]
+    
+    # Calcular métricas no test set
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -92,7 +126,7 @@ for model_name, model in models.items():
     roc_auc = roc_auc_score(y_test, y_pred_proba)
     
     results[model_name] = {
-        'model': model,
+        'model': best_model, # modelo afinado
         'accuracy': accuracy,
         'precision': precision,
         'recall': recall,
@@ -101,8 +135,6 @@ for model_name, model in models.items():
         'predictions': y_pred,
         'probabilities': y_pred_proba
     }
-    
-    print(f"✓")
 
 
 # COMPARISON TABLE
@@ -180,9 +212,9 @@ pickle.dump(best_model, open('credit_risk_model.pkl', 'wb'))
 pickle.dump(le_dict, open('label_encoders.pkl', 'wb'))
 pickle.dump(comparison_df, open('model_comparison.pkl', 'wb'))
 
-print(f"   ✓ Best model ({best_model_name}) saved to 'credit_risk_model.pkl'")
-print(f"   ✓ Label encoders saved to 'label_encoders.pkl'")
-print(f"   ✓ Comparison results saved to 'model_comparison.pkl'")
+print(f"   > Best model ({best_model_name}) saved to 'credit_risk_model.pkl'")
+print(f"   > Label encoders saved to 'label_encoders.pkl'")
+print(f"   > Comparison results saved to 'model_comparison.pkl'")
 
 # ========================================================================
 # SAVE COMPARISON VISUALIZATION
@@ -234,7 +266,7 @@ ax.legend(loc='lower right', fontsize=8)
 
 plt.tight_layout()
 plt.savefig('figures/model_comparison.png', dpi=300, bbox_inches='tight')
-print(f"   ✓ Comparison chart saved to 'figures/model_comparison.png'")
+print(f"   > Comparison chart saved to 'figures/model_comparison.png'")
 
 plt.close()
 
