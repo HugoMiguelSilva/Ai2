@@ -28,8 +28,20 @@ print("="*70)
 print("EMPIRICAL STUDY: CREDIT RISK MODEL COMPARISON")
 print("="*70)
 
-# Load dataset
-df = pd.read_csv('credit_risk_dataset.csv')
+# Load datasets
+REAL_DATASET_PATH = 'data/credit_risk_clean.csv'
+SYNTHETIC_ADDED_PATH = 'data/credit_risk_synthetic_added_rows.csv'
+
+if os.path.exists(REAL_DATASET_PATH):
+    df = pd.read_csv(REAL_DATASET_PATH)
+else:
+    df = pd.read_csv('credit_risk_dataset.csv')
+
+synthetic_added_df = (
+    pd.read_csv(SYNTHETIC_ADDED_PATH)
+    if os.path.exists(SYNTHETIC_ADDED_PATH)
+    else pd.DataFrame()
+)
 
 # DATA CLEANING & PREPROCESSING
 print("\n1. DATA PREPROCESSING")
@@ -37,7 +49,14 @@ print("\n1. DATA PREPROCESSING")
 # Remove rows with missing values
 df_clean = df.dropna()
 print(f"   Rows removed due to missing values: {len(df) - len(df_clean)}")
-print(f"   Remaining rows: {len(df_clean)}")
+print(f"   Remaining real rows: {len(df_clean)}")
+
+if not synthetic_added_df.empty:
+    synthetic_added_df = synthetic_added_df.dropna()
+    synthetic_added_df = synthetic_added_df[df_clean.columns]
+    print(f"   Synthetic rows available for training augmentation: {len(synthetic_added_df)}")
+else:
+    print("   Synthetic rows available for training augmentation: 0")
 
 # Separate features and target
 X = df_clean.drop('loan_status', axis=1)
@@ -52,17 +71,41 @@ print(f"   Categorical columns: {categorical_cols}")
 le_dict = {}
 for col in categorical_cols:
     le = LabelEncoder()
-    X[col] = le.fit_transform(X[col])
+    le.fit(pd.concat([X[col], synthetic_added_df[col]], ignore_index=True) if not synthetic_added_df.empty else X[col])
+    X[col] = le.transform(X[col])
+    if not synthetic_added_df.empty:
+        synthetic_added_df[col] = le.transform(synthetic_added_df[col])
     le_dict[col] = le
     print(f"   > {col} encoded")
 
 # TRAIN-TEST SPLIT
 print(f"\n3. TRAIN-TEST SPLIT")
-X_train, X_test, y_train, y_test = train_test_split(
+X_train_real, X_test, y_train_real, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
-print(f"   Training set: {len(X_train)} samples")
-print(f"   Test set: {len(X_test)} samples")
+print(f"   Real training set before augmentation: {len(X_train_real)} samples")
+print(f"   Real test set: {len(X_test)} samples")
+print("   Evaluation is performed only on real records from data/credit_risk_clean.csv")
+
+if not synthetic_added_df.empty:
+    X_synthetic = synthetic_added_df.drop('loan_status', axis=1)
+    y_synthetic = synthetic_added_df['loan_status']
+    X_train = pd.concat([X_train_real, X_synthetic], ignore_index=True)
+    y_train = pd.concat([y_train_real, y_synthetic], ignore_index=True)
+    shuffled_idx = np.random.default_rng(42).permutation(len(X_train))
+    X_train = X_train.iloc[shuffled_idx].reset_index(drop=True)
+    y_train = y_train.iloc[shuffled_idx].reset_index(drop=True)
+    print(f"   Synthetic rows added to training set: {len(X_synthetic)}")
+    print(f"   Augmented training set: {len(X_train)} samples")
+else:
+    X_train = X_train_real
+    y_train = y_train_real
+    print(f"   Training set: {len(X_train)} samples")
+
+print("   Training class distribution:")
+print(y_train.value_counts(normalize=True).sort_index().round(4).to_string())
+print("   Real test class distribution:")
+print(y_test.value_counts(normalize=True).sort_index().round(4).to_string())
 
 
 # TRAIN MULTIPLE MODELS WITH HYPERPARAMETER TUNING
