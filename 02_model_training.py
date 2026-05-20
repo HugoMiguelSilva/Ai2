@@ -15,6 +15,8 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report, roc_auc_score
@@ -78,7 +80,7 @@ models_params = {
     'Decision Tree': {
         'estimator': DecisionTreeClassifier(random_state=42),
         'param_grid': {
-            'max_depth': [5, 10, 15, 20],
+            'max_depth': [5,6,7],
             'min_samples_split': [2, 5, 10],
             'min_samples_leaf': [1, 2, 4]
         }
@@ -90,6 +92,21 @@ models_params = {
             'max_depth': [10, 15, None],
             'min_samples_split': [2, 5],
             'min_samples_leaf': [1, 2]
+        }
+    },
+    'SVM': {
+        
+        'estimator': SVC(probability=True, random_state=42, cache_size=2000, max_iter=50000),
+        'param_grid': {
+            
+            'C': [0.1, 1.0], 
+            'kernel': ['rbf']
+        }
+    },
+    'Naive Bayes': {
+        'estimator': GaussianNB(),
+        'param_grid': {
+            'var_smoothing': [1e-09, 1e-08, 1e-07]
         }
     }
 }

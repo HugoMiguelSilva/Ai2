@@ -178,6 +178,35 @@ def explain_prediction_contribution(model, input_data, prediction, feature_names
     
     return contrib_df
 
+def get_naive_bayes_contributions(model, input_data, feature_names, top_n=10):
+    """
+    Compute per-feature log-likelihood contributions for Gaussian Naive Bayes.
+    """
+    if not hasattr(model, 'theta_') or not hasattr(model, 'var_'):
+        return None
+
+    x = input_data.values.flatten()
+    means = model.theta_
+    variances = model.var_
+    eps = 1e-9
+    variances = np.where(variances <= 0, eps, variances)
+
+    # Log-likelihood per feature for each class
+    log_prob = -0.5 * np.log(2.0 * np.pi * variances) - ((x - means) ** 2) / (2.0 * variances)
+    log_prob_low = log_prob[0]
+    log_prob_high = log_prob[1]
+    delta = log_prob_high - log_prob_low
+
+    contrib_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Value': x,
+        'LogProb_LowRisk': log_prob_low,
+        'LogProb_HighRisk': log_prob_high,
+        'Delta_HighMinusLow': delta
+    }).sort_values('Delta_HighMinusLow', key=abs, ascending=False)
+
+    return contrib_df.head(top_n)
+
 # ============================================================
 # PAGE CONFIGURATION
 # ============================================================
@@ -502,6 +531,52 @@ with tab1:
                     st.write("---")
                     st.write("**Detailed Feature Analysis:**")
                     st.dataframe(contrib_df[['Feature', 'Value', 'Coefficient', 'Contribution']].head(10), use_container_width=True)
+
+            elif 'SVC' in model_type:
+                st.write(f"**Model Type:** {model_type}")
+                decision_score = model.decision_function(input_data)[0]
+                st.write("This model classifies based on distance to a decision boundary.")
+                st.metric("Decision Score", f"{decision_score:.4f}")
+
+                if hasattr(model, 'coef_'):
+                    st.write("---")
+                    st.subheader("Top Feature Contributions (Linear SVM)")
+                    contrib_df = explain_prediction_contribution(model, input_data, prediction, feature_names)
+                    if contrib_df is not None:
+                        fig, ax = plt.subplots(figsize=(10, 5))
+                        colors = ['#b00020' if x > 0 else '#117a37' for x in contrib_df['Contribution'][:10]]
+                        ax.barh(range(len(contrib_df[:10])), contrib_df['Contribution'][:10], color=colors)
+                        ax.set_yticks(range(len(contrib_df[:10])))
+                        ax.set_yticklabels(contrib_df['Feature'][:10])
+                        ax.set_xlabel('Contribution to Decision Score')
+                        ax.set_title('Feature Contributions')
+                        ax.axvline(0, color='black', linestyle='-', linewidth=0.8)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                else:
+                    st.info("This SVM uses a non-linear kernel, so per-feature contributions are not directly available.")
+
+            elif 'GaussianNB' in model_type or 'Naive' in model_type:
+                st.write(f"**Model Type:** {model_type}")
+                st.write("This model estimates risk using feature-wise probabilities and combines them.")
+
+                nb_df = get_naive_bayes_contributions(model, input_data, feature_names, top_n=10)
+                if nb_df is not None:
+                    st.write("---")
+                    st.subheader("Top Feature Likelihood Shifts")
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    colors = ['#b00020' if x > 0 else '#117a37' for x in nb_df['Delta_HighMinusLow']]
+                    ax.barh(range(len(nb_df)), nb_df['Delta_HighMinusLow'], color=colors)
+                    ax.set_yticks(range(len(nb_df)))
+                    ax.set_yticklabels(nb_df['Feature'])
+                    ax.set_xlabel('Log-Likelihood (High - Low)')
+                    ax.set_title('Feature Impact on Class Likelihood')
+                    ax.axvline(0, color='black', linestyle='-', linewidth=0.8)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+
+                    st.write("**Details:**")
+                    st.dataframe(nb_df, use_container_width=True)
             
         except Exception as e:
             st.error(f"Error making prediction: {str(e)}")

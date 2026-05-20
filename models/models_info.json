@@ -10,12 +10,12 @@
   },
   "Decision Tree": {
     "file": "models\\decision_tree.pkl",
-    "accuracy": 0.9210893854748603,
-    "precision": 0.9228295819935691,
-    "recall": 0.693795326349718,
-    "f1": 0.7920883164673413,
-    "roc_auc": 0.9006890170852603,
-    "weighted_score": 0.8654088841939328
+    "accuracy": 0.9252793296089385,
+    "precision": 0.9656357388316151,
+    "recall": 0.6792908944399678,
+    "f1": 0.7975402081362346,
+    "roc_auc": 0.9039856747947828,
+    "weighted_score": 0.8699249500570259
   },
   "Random Forest": {
     "file": "models\\random_forest.pkl",
@@ -25,5 +25,23 @@
     "f1": 0.805072804133396,
     "roc_auc": 0.9280338382868801,
     "weighted_score": 0.8786554423833601
+  },
+  "SVM": {
+    "file": "models\\svm.pkl",
+    "accuracy": 0.8023743016759777,
+    "precision": 0.8187134502923976,
+    "recall": 0.11281224818694602,
+    "f1": 0.19830028328611898,
+    "roc_auc": 0.7150294691423895,
+    "weighted_score": 0.5432757278133166
+  },
+  "Naive Bayes": {
+    "file": "models\\naive_bayes.pkl",
+    "accuracy": 0.8229748603351955,
+    "precision": 0.646074646074646,
+    "recall": 0.40451248992747785,
+    "f1": 0.4975222993062438,
+    "roc_auc": 0.7842749948054789,
+    "weighted_score": 0.6850538628176716
   }
 }
