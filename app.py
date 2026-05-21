@@ -60,8 +60,9 @@ def get_forest_explanation(forest_model, input_data, feature_names):
     """
     Get explanation for Random Forest predictions by analyzing tree votes
     """
-    # Get predictions from each tree
-    predictions = np.array([tree.predict(input_data)[0] for tree in forest_model.estimators_])
+    # Get predictions from each tree (inner trees don't keep feature names)
+    x_values = input_data.values if isinstance(input_data, pd.DataFrame) else np.asarray(input_data)
+    predictions = np.array([tree.predict(x_values)[0] for tree in forest_model.estimators_])
     
     low_risk_votes = np.sum(predictions == 0)
     high_risk_votes = np.sum(predictions == 1)
@@ -103,11 +104,15 @@ def get_tree_path_explanation(tree_model, input_data, feature_names):
     """
     Get the path the input took through the decision tree and explain it step by step
     """
+    # Match input style to how this model was trained to avoid feature-name warnings
+    use_named_input = hasattr(tree_model, 'feature_names_in_') and isinstance(input_data, pd.DataFrame)
+    x_for_model = input_data if use_named_input else (input_data.values if isinstance(input_data, pd.DataFrame) else np.asarray(input_data))
+
     # Get the leaf node
-    leaf_id = tree_model.apply(input_data.values)
+    leaf_id = tree_model.apply(x_for_model)
     
     # Get decision path
-    node_indicator = tree_model.decision_path(input_data)
+    node_indicator = tree_model.decision_path(x_for_model)
     
     # Get the nodes visited
     node_index = node_indicator.indices[node_indicator.indptr[0]:node_indicator.indptr[1]]
@@ -126,7 +131,10 @@ def get_tree_path_explanation(tree_model, input_data, feature_names):
         if feature[node_id] >= 0:
             threshold_val = threshold[node_id]
             feature_name = feature_names[feature[node_id]]
-            input_val = input_data.iloc[0, feature[node_id]]
+            if isinstance(input_data, pd.DataFrame):
+                input_val = input_data.iloc[0, feature[node_id]]
+            else:
+                input_val = input_data[0, feature[node_id]]
             
             if input_val <= threshold_val:
                 direction = "≤"
@@ -323,7 +331,7 @@ with tab1:
         cred_hist_length = st.slider("Credit History Length (years)", min_value=1, max_value=30, value=3, step=1)
     
     # MAKE PREDICTION
-    if st.button("Assess Risk", type="primary", use_container_width=True):
+    if st.button("Assess Risk", type="primary", width='stretch'):
         try:
             # Prepare data
             input_data = pd.DataFrame({
@@ -340,14 +348,36 @@ with tab1:
                 'cb_person_cred_hist_length': [cred_hist_length]
             })
             
-            # Encode categorical features
+            # Encode categorical features (safe: map unseen labels to encoder's first class)
             for col, encoder in encoders.items():
                 if col in input_data.columns:
-                    input_data[col] = encoder.transform(input_data[col])
-            
-            # Make prediction
-            prediction = model.predict(input_data)[0]
-            prediction_proba = model.predict_proba(input_data)[0]
+                    try:
+                        input_data[col] = encoder.transform(input_data[col])
+                    except Exception:
+                        # fallback: map unseen value to label 0
+                        input_data[col] = 0
+
+            # Align input columns to the model's expected feature names
+            if hasattr(model, 'feature_names_in_'):
+                model_features = list(model.feature_names_in_)
+            else:
+                model_features = input_data.columns.tolist()
+
+            aligned = pd.DataFrame([[0] * len(model_features)], columns=model_features)
+            for c in model_features:
+                if c in input_data.columns:
+                    aligned[c] = input_data[c].iloc[0]
+
+            # Use the same input style as fit-time to avoid sklearn feature-name warnings
+            use_named_input = hasattr(model, 'feature_names_in_')
+            model_input = aligned if use_named_input else aligned.values
+
+            # Make prediction using aligned input
+            prediction = model.predict(model_input)[0]
+            prediction_proba = model.predict_proba(model_input)[0]
+
+            # Keep an aligned copy for explanations (matches training feature order)
+            aligned_input = aligned.copy()
             
             # Display results
             st.markdown("---")
@@ -407,7 +437,8 @@ with tab1:
             st.markdown("---")
             st.subheader("How the Model Reached This Conclusion")
             
-            feature_names = input_data.columns.tolist()
+            # Use model's feature ordering for explanations
+            feature_names = model_features
             model_type = type(model).__name__
             
             # Show explanation based on model type
@@ -436,8 +467,8 @@ with tab1:
                     st.subheader("Decision Tree Path Taken")
                     st.write("Here's exactly how the tree navigated to reach this conclusion:")
                     
-                    # Get the path explanation
-                    path_steps = get_tree_path_explanation(model, input_data, feature_names)
+                    # Get the path explanation (use aligned input matching training features)
+                    path_steps = get_tree_path_explanation(model, aligned_input, feature_names)
                     
                     col_path1, col_path2 = st.columns([1, 2])
                     
@@ -463,7 +494,7 @@ with tab1:
                     # Show the full tree
                     st.write("---")
                     with st.expander("View Complete Decision Tree Visualization"):
-                        tree_fig = plot_decision_tree_full(model, feature_names, input_data)
+                        tree_fig = plot_decision_tree_full(model, feature_names, aligned_input)
                         st.pyplot(tree_fig)
                         st.caption("Full tree structure: Each box shows a decision rule and the result at leaf nodes")
                 
@@ -473,7 +504,7 @@ with tab1:
                     st.subheader("Random Forest Consensus")
                     st.write("Here's how all the trees in the ensemble voted:")
                     
-                    forest_info = get_forest_explanation(model, input_data, feature_names)
+                    forest_info = get_forest_explanation(model, aligned_input, feature_names)
                     
                     col_forest1, col_forest2 = st.columns([1, 1])
                     
@@ -497,7 +528,7 @@ with tab1:
                 st.write(f"**Model Type:** {model_type}")
                 st.write("This model weighs each feature and combines them to calculate risk probability.")
                 
-                contrib_df = explain_prediction_contribution(model, input_data, prediction, feature_names)
+                contrib_df = explain_prediction_contribution(model, aligned_input, prediction, feature_names)
                 if contrib_df is not None:
                     st.write("---")
                     st.subheader("How Features Contributed to the Decision")
@@ -530,18 +561,18 @@ with tab1:
                     
                     st.write("---")
                     st.write("**Detailed Feature Analysis:**")
-                    st.dataframe(contrib_df[['Feature', 'Value', 'Coefficient', 'Contribution']].head(10), use_container_width=True)
+                    st.dataframe(contrib_df[['Feature', 'Value', 'Coefficient', 'Contribution']].head(10), width='stretch')
 
             elif 'SVC' in model_type:
                 st.write(f"**Model Type:** {model_type}")
-                decision_score = model.decision_function(input_data)[0]
+                decision_score = model.decision_function(model_input)[0]
                 st.write("This model classifies based on distance to a decision boundary.")
                 st.metric("Decision Score", f"{decision_score:.4f}")
 
                 if hasattr(model, 'coef_'):
                     st.write("---")
                     st.subheader("Top Feature Contributions (Linear SVM)")
-                    contrib_df = explain_prediction_contribution(model, input_data, prediction, feature_names)
+                    contrib_df = explain_prediction_contribution(model, aligned_input, prediction, feature_names)
                     if contrib_df is not None:
                         fig, ax = plt.subplots(figsize=(10, 5))
                         colors = ['#b00020' if x > 0 else '#117a37' for x in contrib_df['Contribution'][:10]]
@@ -560,7 +591,7 @@ with tab1:
                 st.write(f"**Model Type:** {model_type}")
                 st.write("This model estimates risk using feature-wise probabilities and combines them.")
 
-                nb_df = get_naive_bayes_contributions(model, input_data, feature_names, top_n=10)
+                nb_df = get_naive_bayes_contributions(model, aligned_input, feature_names, top_n=10)
                 if nb_df is not None:
                     st.write("---")
                     st.subheader("Top Feature Likelihood Shifts")
@@ -576,7 +607,7 @@ with tab1:
                     st.pyplot(fig)
 
                     st.write("**Details:**")
-                    st.dataframe(nb_df, use_container_width=True)
+                    st.dataframe(nb_df, width='stretch')
             
         except Exception as e:
             st.error(f"Error making prediction: {str(e)}")
@@ -604,59 +635,33 @@ with tab2:
         st.metric("Avg Income", f"${avg_income:,.0f}")
     
     st.markdown("---")
-    
-    # Display visualizations
+
+    def show_figure(title, filename):
+        st.subheader(title)
+        fig_path = os.path.join('figures', filename)
+        if os.path.exists(fig_path):
+            st.image(fig_path)
+        else:
+            st.warning(f"Figure not found: {fig_path}")
+
+    # Display pre-generated visualizations from figures/
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.subheader("Risk Distribution")
-        fig, ax = plt.subplots(figsize=(8, 5))
-        status_counts = df_clean['loan_status'].value_counts()
-        ax.pie([status_counts[0], status_counts[1]], 
-               labels=['Low Risk', 'High Risk'],
-               autopct='%1.1f%%',
-               colors=['#2ecc71', '#e74c3c'],
-               startangle=90)
-        ax.set_title('Loan Status Distribution', fontsize=12, weight='bold')
-        st.pyplot(fig)
-    
+        show_figure("Risk Distribution", '01_loan_status_distribution.png')
     with col2:
-        st.subheader("Default Rate by Loan Grade")
-        fig, ax = plt.subplots(figsize=(8, 5))
-        loan_grade_risk = pd.crosstab(df_clean['loan_grade'], df_clean['loan_status'], normalize='index') * 100
-        loan_grade_risk.plot(kind='bar', ax=ax, color=['#2ecc71', '#e74c3c'], edgecolor='black')
-        ax.set_xlabel('Loan Grade', fontsize=10, weight='bold')
-        ax.set_ylabel('Percentage (%)', fontsize=10, weight='bold')
-        ax.legend(['Low Risk', 'High Risk'], fontsize=9)
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=0)
-        plt.tight_layout()
-        st.pyplot(fig)
-    
-    # More visualizations
+        show_figure("Default Rate by Loan Grade", '05_loan_grade_risk.png')
+
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.subheader("Income Distribution by Risk")
-        fig, ax = plt.subplots(figsize=(8, 5))
-        low_risk_income = df_clean[df_clean['loan_status'] == 0]['person_income']
-        high_risk_income = df_clean[df_clean['loan_status'] == 1]['person_income']
-        ax.hist(low_risk_income, bins=40, alpha=0.6, label='Low Risk', color='#2ecc71', edgecolor='black')
-        ax.hist(high_risk_income, bins=40, alpha=0.6, label='High Risk', color='#e74c3c', edgecolor='black')
-        ax.set_xlabel('Income ($)', fontsize=10, weight='bold')
-        ax.set_ylabel('Frequency', fontsize=10, weight='bold')
-        ax.legend(fontsize=9)
-        plt.tight_layout()
-        st.pyplot(fig)
-    
+        show_figure("Income Distribution by Risk", '02_income_distribution.png')
     with col2:
-        st.subheader("Age Distribution by Risk")
-        fig, ax = plt.subplots(figsize=(8, 5))
-        low_risk = df_clean[df_clean['loan_status'] == 0]
-        high_risk = df_clean[df_clean['loan_status'] == 1]
-        ax.hist(low_risk['person_age'], bins=30, alpha=0.6, label='Low Risk', color='#2ecc71', edgecolor='black')
-        ax.hist(high_risk['person_age'], bins=30, alpha=0.6, label='High Risk', color='#e74c3c', edgecolor='black')
-        ax.set_xlabel('Age (years)', fontsize=10, weight='bold')
-        ax.set_ylabel('Frequency', fontsize=10, weight='bold')
-        ax.legend(fontsize=9)
-        plt.tight_layout()
-        st.pyplot(fig)
+        show_figure("Age Distribution by Risk", '04_age_distribution.png')
+
+    with st.expander("More Dataset Graphs"):
+        col3, col4 = st.columns(2)
+        with col3:
+            show_figure("Loan Amount Distribution by Risk", '03_loan_vs_income.png')
+            show_figure("Default Rate by Employment Length", '06_employment_risk.png')
+        with col4:
+            show_figure("Interest Rate Distribution by Risk", '07_interest_rate_distribution.png')
+            show_figure("Default Rate by Loan Intent", '08_loan_intent_risk.png')

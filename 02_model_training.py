@@ -87,6 +87,39 @@ print(f"   Real training set before augmentation: {len(X_train_real)} samples")
 print(f"   Real test set: {len(X_test)} samples")
 print("   Evaluation is performed only on real records from data/credit_risk_clean.csv")
 
+# Offer the user an option to run quick feature-selection to drop least important features
+try:
+    ans = input("Perform quick feature selection to drop 2 least important features? (y/n) [y]: ")
+    if isinstance(ans, str):
+        ans = ans.strip().lower()
+    use_feature_selection = True if ans == '' or (isinstance(ans, str) and ans.startswith('y')) else False
+except Exception:
+    use_feature_selection = False
+
+if use_feature_selection:
+    # Quick feature-selection: drop two least important features to speed training
+    # (fit a small random forest on the real training set to estimate importances)
+    print(f"\n4. FEATURE SELECTION - Removing 2 least important features to speed up training")
+    try:
+        rf_quick = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+        rf_quick.fit(X_train_real, y_train_real)
+        importances = pd.Series(rf_quick.feature_importances_, index=X_train_real.columns)
+        to_drop = list(importances.sort_values().head(2).index)
+        if to_drop:
+            print(f"   Removing least important features: {to_drop}")
+            # Drop from training and test sets (and from full X), and from any synthetic rows
+            X_train_real = X_train_real.drop(columns=to_drop)
+            X_test = X_test.drop(columns=to_drop)
+            X = X.drop(columns=to_drop)
+            if not synthetic_added_df.empty:
+                synthetic_added_df = synthetic_added_df.drop(columns=[c for c in to_drop if c in synthetic_added_df.columns])
+        else:
+            print("   No features identified to drop.")
+    except Exception as e:
+        print(f"   Feature selection skipped (error): {e}")
+else:
+    print("\n4. FEATURE SELECTION - Skipped by user choice")
+
 if not synthetic_added_df.empty:
     X_synthetic = synthetic_added_df.drop('loan_status', axis=1)
     y_synthetic = synthetic_added_df['loan_status']
@@ -304,9 +337,7 @@ print(f"   > Label encoders saved to '{MODEL_DIR}/label_encoders.pkl'")
 print(f"   > Comparison results saved to '{MODEL_DIR}/model_comparison.pkl'")
 print(f"   > Models metadata saved to '{MODEL_DIR}/models_info.pkl' and .json")
 
-# ========================================================================
 # SAVE COMPARISON VISUALIZATION
-# ========================================================================
 print(f"\n10. CREATING COMPARISON VISUALIZATIONS")
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 10))
