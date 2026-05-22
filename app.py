@@ -617,7 +617,7 @@ with tab2:
     st.header("Dataset Analysis")
     
     # Load data
-    df = pd.read_csv('credit_risk_dataset.csv')
+    df = pd.read_csv('data/credit_risk_clean.csv')
     df_clean = df.dropna()
     
     # Key statistics

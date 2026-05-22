@@ -24,7 +24,7 @@ plt.rcParams['xtick.labelsize'] = 10
 plt.rcParams['ytick.labelsize'] = 10
 
 # Load dataset
-df = pd.read_csv('credit_risk_dataset.csv')
+df = pd.read_csv('data/credit_risk_clean.csv')
 df_clean = df.dropna()
 low_risk = df_clean[df_clean['loan_status'] == 0]
 high_risk = df_clean[df_clean['loan_status'] == 1]

@@ -32,10 +32,7 @@ print("="*70)
 REAL_DATASET_PATH = 'data/credit_risk_clean.csv'
 SYNTHETIC_ADDED_PATH = 'data/credit_risk_synthetic_added_rows.csv'
 
-if os.path.exists(REAL_DATASET_PATH):
-    df = pd.read_csv(REAL_DATASET_PATH)
-else:
-    df = pd.read_csv('credit_risk_dataset.csv')
+df = pd.read_csv(REAL_DATASET_PATH)
 
 synthetic_added_df = (
     pd.read_csv(SYNTHETIC_ADDED_PATH)

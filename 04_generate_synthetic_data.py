@@ -31,8 +31,8 @@ from scipy.stats import ks_2samp
 
 RANDOM_STATE = 42
 ROOT = Path(__file__).resolve().parent
-DATASET_PATH = ROOT / "credit_risk_dataset.csv"
 DATA_DIR = ROOT / "data"
+DATASET_PATH = DATA_DIR / "credit_risk_clean.csv"
 MODELS_DIR = ROOT / "models"
 
 

@@ -16,7 +16,7 @@ print("="*60)
 print("CREDIT RISK DATASET - EXPLORATORY DATA ANALYSIS")
 print("="*60)
 
-df = pd.read_csv('credit_risk_dataset.csv')
+df = pd.read_csv('data/credit_risk_clean.csv')
 
 # Display basic info
 print("\n1. DATASET SHAPE")
