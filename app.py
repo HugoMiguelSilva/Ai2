@@ -289,7 +289,13 @@ else:
     @st.cache_resource
     def load_default_model():
         model = pickle.load(open('credit_risk_model.pkl', 'rb'))
-        encoders = pickle.load(open('label_encoders.pkl', 'rb'))
+        # Prefer the canonical encoders path inside the models/ folder for consistency.
+        encoders_path = os.path.join('models', 'label_encoders.pkl')
+        if os.path.exists(encoders_path):
+            encoders = pickle.load(open(encoders_path, 'rb'))
+        else:
+            # Backwards-compatible fallback to project root
+            encoders = pickle.load(open('label_encoders.pkl', 'rb'))
         return model, encoders
 
     model, encoders = load_default_model()
@@ -331,7 +337,7 @@ with tab1:
         cred_hist_length = st.slider("Credit History Length (years)", min_value=1, max_value=30, value=3, step=1)
     
     # MAKE PREDICTION
-    if st.button("Assess Risk", type="primary", width='stretch'):
+    if st.button("Assess Risk"):
         try:
             # Prepare data
             input_data = pd.DataFrame({
@@ -351,11 +357,17 @@ with tab1:
             # Encode categorical features (safe: map unseen labels to encoder's first class)
             for col, encoder in encoders.items():
                 if col in input_data.columns:
-                    try:
-                        input_data[col] = encoder.transform(input_data[col])
-                    except Exception:
-                        # fallback: map unseen value to label 0
-                        input_data[col] = 0
+                    # If encoder exposes classes_ (LabelEncoder), map unseen values to encoder.classes_[0]
+                    if hasattr(encoder, 'classes_'):
+                        classes = list(encoder.classes_)
+                        mapping = {val: idx for idx, val in enumerate(classes)}
+                        fallback = mapping.get(classes[0], 0) if classes else 0
+                        input_data[col] = input_data[col].map(lambda v: mapping.get(v, fallback)).astype(int)
+                    else:
+                        try:
+                            input_data[col] = encoder.transform(input_data[col])
+                        except Exception:
+                            input_data[col] = 0
 
             # Align input columns to the model's expected feature names
             if hasattr(model, 'feature_names_in_'):

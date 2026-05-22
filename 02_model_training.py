@@ -1,8 +1,3 @@
-"""
-Credit Risk Prediction - Model Training & Empirical Comparison
-Empirical Study: Train multiple models, compare performance, select best
-"""
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -173,7 +168,7 @@ models_params = {
         'param_grid': {
             
             'C': [0.1, 1.0], 
-            'kernel': ['rbf']
+            'kernel': ['rbf', 'linear']
         }
     },
     'Naive Bayes': {
@@ -192,25 +187,25 @@ for model_name, config in models_params.items():
     grid_search = GridSearchCV(
         estimator=config['estimator'],
         param_grid=config['param_grid'],
-        cv=3, # 3 folds de cross-validation
-        scoring='f1', # Otimizando diretamente para F1-Score
-        n_jobs=-1, # Usa todos os cores do CPU
-        verbose=1 # Mostra resumo do progresso no terminal
+        cv=3,
+        scoring='f1',
+        n_jobs=-1, 
+        verbose=1 
     )
     
-    # Treinar todas as combinações
+    # Fit the grid search on the training data
     grid_search.fit(X_train, y_train)
     
-    # Obter o melhor modelo treinado
+    #Best model from grid search
     best_model = grid_search.best_estimator_
     print(f"      > Melhores parâmetros: {grid_search.best_params_}")
     print(f"      > Melhor F1-Score (cross-val): {grid_search.best_score_:.4f}")
     
-    # Fazer previsões no teste set usando o MELHOR modelo
+    # Evaluate on the test set
     y_pred = best_model.predict(X_test) 
     y_pred_proba = best_model.predict_proba(X_test)[:, 1]
     
-    # Calcular métricas no test set
+    # Calculatese evaluation metrics
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -218,7 +213,7 @@ for model_name, config in models_params.items():
     roc_auc = roc_auc_score(y_test, y_pred_proba)
     
     results[model_name] = {
-        'model': best_model, # modelo afinado
+        'model': best_model, 
         'accuracy': accuracy,
         'precision': precision,
         'recall': recall,
